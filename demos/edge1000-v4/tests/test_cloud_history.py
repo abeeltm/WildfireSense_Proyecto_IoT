@@ -140,11 +140,13 @@ class CloudHistoryTests(unittest.TestCase):
         )
 
 
-class CloudHistoryHttpTests(CloudHistoryTests):
-    """Keep API checks in their own temporary server; inherit store coverage."""
+class CloudHistoryHttpTests(unittest.TestCase):
+    """HTTP tests use an isolated temporary database and server."""
 
     def setUp(self):
-        super().setUp()
+        self.directory = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.directory.name) / "cloud.sqlite3"
+        self.store = AlertStore(self.db_path)
         self.httpd = ThreadingHTTPServer(
             ("127.0.0.1", 0), build_handler(self.store, BrokerStatus())
         )
@@ -156,7 +158,7 @@ class CloudHistoryHttpTests(CloudHistoryTests):
         self.httpd.shutdown()
         self.httpd.server_close()
         self.thread.join(timeout=3)
-        super().tearDown()
+        self.directory.cleanup()
 
     def get(self, path):
         with urlopen(self.url + path, timeout=5) as response:

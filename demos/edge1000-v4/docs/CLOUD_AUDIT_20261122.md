@@ -55,7 +55,7 @@ Solo se modifican:
 
 **Compatibilidad:** no cambia ningún nombre de topic ni forma de mensaje/ACK MQTT. Los endpoints antiguos y el dashboard existente conservan sus respuestas; solo se añade información. Un ID conflictivo no se confirma, de manera intencionada: requiere diagnóstico del emisor, no eliminación silenciosa de datos. No se toca el modelo.
 
-**Estado de pruebas:** las 44 pruebas de la descripción del PR #6 son evidencia declarada por su autor. El `resultados/tests.txt` versionado recoge solo 22 casos de un ensayo anterior; no asumir que certifica toda la V4. Los nueve tests nuevos y la suite completa deben confirmarse con GitHub Actions y en Docker antes de afirmar que pasan. El fichero `resultados/ensayos_docker_20261120.json` documenta un ensayo de 1.000 clientes aportado por el equipo; no equivale a la validación de esta rama.
+**Estado de pruebas (verificado 22/11/2026):** GitHub Actions [run #45022489272](https://github.com/guillen-eng/WildfireSense_Proyecto_IoT/actions/runs/45022489272), Python 3.12, completó **53 tests en 7,722 s, OK**: los 44 de V4 más los nueve tests Cloud nuevos. La ejecución validó los commits de código/tests y workflow hasta `37e248ad9c3da8ac118c274de597fdc784cf4402`; los commits posteriores de documentación no alteran runtime. El archivo histórico `resultados/tests.txt` contiene solo 22 tests antiguos y no debe tomarse como la prueba actual. **Pendiente:** test E2E con broker MQTT y Docker en el equipo de entrega, además de inyección de fallo de SQLite. El archivo `resultados/ensayos_docker_20261120.json` documenta un ensayo de 1.000 clientes aportado por el equipo; no valida los cambios de esta rama.
 
 ## 5. Hoja de ruta priorizada al 11/12/2026
 

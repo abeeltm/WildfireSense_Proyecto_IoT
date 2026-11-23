@@ -130,9 +130,23 @@ def group_suspected_fire(events, gap_s=MAX_NEIGHBOUR_GAP_S):
             and not isinstance(e.get("fire_score"), bool)
             and math.isfinite(e["fire_score"])
         ]
+        first_ts = {}
+        for e in ordered:
+            first_ts.setdefault(e["node_id"], e["_ts"])
+        origin_ts = ordered[0]["_ts"]
+        timeline = [
+            dict(
+                node=n,
+                first_alarm=datetime.fromtimestamp(t, timezone.utc).isoformat(),
+                offset_s=round(t - origin_ts, 1),
+            )
+            for n, t in sorted(first_ts.items(), key=lambda kv: (kv[1], kv[0]))
+        ]
         result.append(
             dict(
                 incident_id=incident_id,
+                timeline=timeline,
+                duration_s=round(ordered[-1]["_ts"] - origin_ts, 1),
                 run_id=run,
                 first_seen=datetime.fromtimestamp(ordered[0]["_ts"], timezone.utc).isoformat(),
                 last_seen=datetime.fromtimestamp(ordered[-1]["_ts"], timezone.utc).isoformat(),

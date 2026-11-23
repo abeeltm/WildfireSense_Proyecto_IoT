@@ -1,7 +1,7 @@
 """WildfireSense local central receiver: MQTT QoS 1 -> durable SQLite -> HTTP UI.
 
 This is a local Cloud *emulator* on the Docker network, not an Internet cloud.
-No sensor readings are subscribed to or stored; only official Edge alerts.
+Official Edge alerts are the immutable log; reading batches are kept in a bounded window.
 """
 
 from __future__ import annotations
@@ -9,6 +9,8 @@ from __future__ import annotations
 from edge.transport import ACK, PING, PONG, STATS, SUMMARY, wire
 from .analysis import summarize
 from .incidents import group_suspected_fire
+from . import readings as rd
+from . import labels as lb
 import hashlib
 from contextlib import contextmanager
 import json
@@ -37,6 +39,7 @@ class AlertStore:
 
     def __init__(self, db_path: str | Path):
         self.db_path = str(db_path)
+        self.on_labels = None
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         with self.connect() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -56,6 +59,7 @@ class AlertStore:
             conn.execute(
                 "CREATE TABLE IF NOT EXISTS summaries(id TEXT PRIMARY KEY,payload TEXT)"
             )
+            rd.create_tables(conn)
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_alerts_node ON alerts(node_id)"
             )
@@ -144,6 +148,15 @@ class AlertStore:
             else "conflict"
         )
 
+    def ingest_readings(self, payload: bytes, window_s: int = rd.WINDOW_S):
+        """Returns (inserted|duplicate|invalid, batch_id, inserted, duplicates)."""
+        with self.connect() as conn:
+            return rd.ingest_batch(conn, payload, window_s)
+
+    def readings(self, **filters):
+        with self.connect() as conn:
+            return rd.query(conn, **filters)
+
     def ingest_summary(self, payload: bytes) -> tuple[str, str | None]:
         """Validate and persist one aggregated window before application-level ACK.
 
@@ -224,9 +237,32 @@ class AlertStore:
             ).fetchall()
         return [json.loads(row["payload"]) for row in rows]
 
+    def incident_list(self):
+        """All incidents (grouping over the immutable alert log) with timelines."""
+        return self._incidents(10**9)[1]
+
     def incidents(self, limit: int = 100):
         """Derived view; never changes the immutable alert event log."""
         limit = max(1, min(200, int(limit)))
+        candidates, incidents = self._incidents(limit)
+        with self.connect() as conn:
+            labels = lb.effective(conn)
+        for item in incidents[:limit]:
+            label = labels.get(item["incident_id"])
+            item["label"] = (
+                dict(label=label[0], true_class=label[1], source=label[2])
+                if label
+                else None
+            )
+        return dict(
+            total_incidents=len(incidents),
+            suspected_fire_events=len(candidates),
+            incidents=incidents[:limit],
+            grouping_note=("Agrupacion experimental por run_id, ocho celdas vecinas "
+                           "y 30 minutos; no equivale a incendios reales"),
+        )
+
+    def _incidents(self, limit):
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT event_hash, node_id, generated_at, received_at, payload_json "
@@ -252,13 +288,64 @@ class AlertStore:
                 test_only=payload.get("test_only"),
             ))
         incidents = group_suspected_fire(candidates)
-        return dict(
-            total_incidents=len(incidents),
-            suspected_fire_events=len(candidates),
-            incidents=incidents[:limit],
-            grouping_note=("Agrupacion experimental por run_id, ocho celdas vecinas "
-                           "y 30 minutos; no equivale a incendios reales"),
-        )
+        with self.connect() as conn:
+            for item in incidents[:limit]:
+                start = rd._ts_ms(item["first_seen"])
+                end = rd._ts_ms(item["last_seen"])
+                item["peak_pm25"] = rd.peak_pm25(
+                    conn,
+                    item["run_id"],
+                    [step["node"] for step in item["timeline"]],
+                    start - 600_000,
+                    end + 600_000,
+                )
+        return candidates, incidents
+
+    def set_label(self, incident_id, label, true_class):
+        if incident_id not in {i["incident_id"] for i in self.incident_list()}:
+            raise KeyError(incident_id)
+        with self.connect() as conn:
+            cls = lb.set_label(conn, incident_id, label, true_class, "manual")
+        if self.on_labels:
+            self.on_labels()
+        return cls
+
+    def load_truth(self, run_id, truth):
+        """Store the scenario truth and label that run's incidents. Returns count."""
+        incidents = [i for i in self.incident_list() if i["run_id"] == run_id]
+        with self.connect() as conn:
+            lb.save_truth(conn, run_id, truth)
+            done = lb.label_from_truth(conn, incidents)
+        if self.on_labels:
+            self.on_labels()
+        return done
+
+    def export_training(self, path):
+        """Write verified labelled readings as JSONL for lab/train.py --extra."""
+        incidents = self.incident_list()
+        n = 0
+        with self.connect() as conn, open(path, "w", encoding="utf-8") as out:
+            for row in lb.training_rows(conn, incidents):
+                out.write(json.dumps(row, separators=(",", ":")) + "\n")
+                n += 1
+        return n
+
+    def nodes(self):
+        with self.connect() as conn:
+            return [dict(r) for r in conn.execute("SELECT * FROM nodes ORDER BY node_id")]
+
+    def zones(self):
+        """Latest summary per zone (derived from the summaries table)."""
+        latest = {}
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT payload FROM summaries ORDER BY rowid DESC LIMIT 5000"
+            ).fetchall()
+        for row in rows:
+            data = json.loads(row["payload"])
+            if "zone" in data and data["zone"] not in latest:
+                latest[data["zone"]] = data
+        return sorted(latest.values(), key=lambda d: d["zone"])
 
     def stats(self):
         with self.connect() as conn:
@@ -274,6 +361,7 @@ class AlertStore:
             last = conn.execute(
                 "SELECT received_at FROM alerts ORDER BY id DESC LIMIT 1"
             ).fetchone()
+            readings_info = rd.counts(conn)
         counts = {r["alert_type"]: r["n"] for r in rows}
         return {
             "last_summary": json.loads(summary[0]) if summary else None,
@@ -282,6 +370,7 @@ class AlertStore:
             "environmental_alerts": counts.get("environmental_alert", 0),
             "sos_alerts": counts.get("sos_alert", 0),
             "last_received_at": last["received_at"] if last else None,
+            **readings_info,
         }
 
 
@@ -293,7 +382,7 @@ class BrokerStatus:
         self.last_error = None
 
 
-def build_handler(store: AlertStore, status: BrokerStatus):
+def build_handler(store: AlertStore, status: BrokerStatus, retrainer=None):
     dashboard = Path(__file__).with_name("dashboard.html").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
@@ -340,6 +429,39 @@ def build_handler(store: AlertStore, status: BrokerStatus):
                             or int(raw_limit) == 0):
                         return self.json_error(400, "limit debe ser entero de 1 a 200")
                     data = store.incidents(min(int(raw_limit), 200))
+                elif uri.path == "/api/models":
+                    if retrainer is None:
+                        return self.json_error(404, "reentrenamiento no activo")
+                    data = retrainer.state()
+                elif uri.path == "/api/readings":
+                    def number(name):
+                        raw = query.get(name, [None])[0]
+                        if raw is None:
+                            return None
+                        if not raw.lstrip("-").isdigit() or len(raw) > 16:
+                            raise ValueError(name)
+                        return int(raw)
+
+                    try:
+                        raw_node = query.get("node_id", [None])[0]
+                        node = rd.node_name(raw_node) if raw_node else None
+                        if raw_node and node is None:
+                            raise ValueError("node_id")
+                        data = {
+                            "readings": store.readings(
+                                run_id=query.get("run_id", [None])[0],
+                                node_id=node,
+                                since_ms=number("since"),
+                                until_ms=number("until"),
+                                limit=number("limit") or 500,
+                            )
+                        }
+                    except ValueError as exc:
+                        return self.json_error(400, f"parametro invalido: {exc}")
+                elif uri.path == "/api/nodes":
+                    data = {"nodes": store.nodes()}
+                elif uri.path == "/api/zones":
+                    data = {"zones": store.zones()}
                 elif uri.path == "/api/alerts":
                     raw_limit = query.get("limit", ["100"])[0]
                     if (
@@ -369,6 +491,47 @@ def build_handler(store: AlertStore, status: BrokerStatus):
                 LOGGER.exception("HTTP database error: %s", exc)
                 return self.json_error(503, "base de datos no disponible")
 
+        def do_POST(self):
+            try:
+                path = urlparse(self.path).path
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 1 << 20:
+                    return self.json_error(400, "cuerpo vacio o demasiado grande")
+                body = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(body, dict):
+                    return self.json_error(400, "se espera un objeto JSON")
+                if path == "/api/labels":
+                    cls = store.set_label(
+                        body.get("incident_id"), body.get("label"), body.get("true_class")
+                    )
+                    data = {"incident_id": body["incident_id"], "true_class": cls}
+                elif path in ("/api/retrain", "/api/models/promote", "/api/models/rollback"):
+                    if retrainer is None:
+                        return self.json_error(404, "reentrenamiento no activo")
+                    if path == "/api/retrain":
+                        if retrainer.lock.locked():
+                            return self.json_error(409, "reentrenamiento en curso")
+                        threading.Thread(
+                            target=retrainer.run, args=("manual",), daemon=True
+                        ).start()
+                        data = {"started": True}
+                    elif path == "/api/models/promote":
+                        data = {"active": retrainer.promote(body.get("version"))}
+                    else:
+                        data = {"active": retrainer.rollback()}
+                elif path == "/api/truth":
+                    data = {"labelled": store.load_truth(body.get("run_id"), body.get("truth"))}
+                else:
+                    return self.json_error(404, "no encontrado")
+                return self.respond(200, json.dumps(data).encode("utf-8"))
+            except KeyError:
+                return self.json_error(404, "incidente desconocido")
+            except (ValueError, UnicodeDecodeError):
+                return self.json_error(400, "peticion invalida")
+            except (OSError, sqlite3.Error) as exc:
+                LOGGER.exception("HTTP database error: %s", exc)
+                return self.json_error(503, "base de datos no disponible")
+
         def json_error(self, code, message):
             return self.respond(code, json.dumps({"error": message}).encode())
 
@@ -378,8 +541,10 @@ def build_handler(store: AlertStore, status: BrokerStatus):
     return Handler
 
 
-def serve_http(store: AlertStore, status: BrokerStatus, host="0.0.0.0", port=8080):
-    server = ThreadingHTTPServer((host, port), build_handler(store, status))
+def serve_http(
+    store: AlertStore, status: BrokerStatus, host="0.0.0.0", port=8080, retrainer=None
+):
+    server = ThreadingHTTPServer((host, port), build_handler(store, status, retrainer))
     LOGGER.info("HTTP_READY %s:%s", host, server.server_port)
     server.serve_forever()
 
@@ -393,7 +558,7 @@ def run_mqtt(store: AlertStore, status: BrokerStatus, host: str, port: int):
             LOGGER.error("MQTT_CONNECT_FAILED %s", reason_code)
             return
         result, mid = client.subscribe(
-            [(TOPIC, 1), (PING, 0), (SUMMARY, 1), (STATS, 0)]
+            [(TOPIC, 1), (PING, 0), (SUMMARY, 1), (STATS, 0), (rd.READINGS_TOPIC, 1)]
         )
         if result != mqtt.MQTT_ERR_SUCCESS:
             status.connected.clear()
@@ -415,6 +580,19 @@ def run_mqtt(store: AlertStore, status: BrokerStatus, host: str, port: int):
 
     def on_message(client, userdata, msg):
         try:
+            if msg.topic == rd.READINGS_TOPIC:
+                result, batch_id, added, dup = store.ingest_readings(msg.payload)
+                if result in ("inserted", "duplicate"):
+                    client.publish(ACK, wire(dict(event_id=batch_id)), qos=1)
+                    LOGGER.info(
+                        "READINGS_STORED batch=%s inserted=%s duplicates=%s",
+                        batch_id,
+                        added,
+                        dup,
+                    )
+                else:
+                    LOGGER.warning("READINGS_REJECTED invalid batch")
+                return
             if len(msg.payload) > MAX_PAYLOAD_BYTES:
                 return
             if msg.topic == STATS:
@@ -501,7 +679,20 @@ def main():
         name="mqtt-subscriber",
     )
     mqtt_thread.start()
-    serve_http(store, status, port=int(os.environ.get("HTTP_PORT", "8080")))
+    retrainer = None
+    if os.environ.get("CLOUD_RETRAIN", "1") == "1":
+        from .retrain import Retrainer
+
+        retrainer = Retrainer(
+            store,
+            Path(os.environ.get("CLOUD_DB_PATH", "/app/data/alerts.sqlite3")).parent
+            / "retrain",
+            trigger_labels=int(os.environ.get("RETRAIN_TRIGGER_LABELS", "10")),
+        )
+        store.on_labels = retrainer.maybe_trigger
+    serve_http(
+        store, status, port=int(os.environ.get("HTTP_PORT", "8080")), retrainer=retrainer
+    )
 
 
 if __name__ == "__main__":

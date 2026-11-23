@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>WildfireSense · Centro de control local</title>
+  <style>
+  :root{font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:#eaf2f4;background:#0a131b;font-synthesis:none}*{box-sizing:border-box}body{margin:0}header{padding:30px max(22px,calc((100vw - 1150px)/2));background:linear-gradient(115deg,#112534,#172c30 65%,#263c2c);border-bottom:1px solid #2c444d}.brand{display:flex;align-items:center;gap:14px}.mark{font-size:34px}.eyebrow{text-transform:uppercase;letter-spacing:.18em;font-size:11px;color:#8cb7ac}h1{margin:4px 0 0;font-size:clamp(26px,4vw,38px);font-weight:750;letter-spacing:-.04em}header p{color:#c2d0d4;line-height:1.55;max-width:720px}.page{max-width:1150px;margin:0 auto;padding:24px 22px 70px}.status{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:18px}.pill{border:1px solid #385157;background:#22353a;border-radius:40px;padding:8px 12px;font-size:13px}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#d9aa5e;margin-right:8px}.dot.ok{background:#4fd4a6}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:22px}.card{background:#14232d;border:1px solid #2d414b;padding:20px;border-radius:15px}.card span{display:block;color:#a9bdc5;font-size:13px}.value{display:block;font-size:34px;font-weight:740;margin-top:8px;letter-spacing:-.04em}.value.critical{color:#ff9c8c}.value.high{color:#ffd28a}h2{font-size:19px;margin:0}.section{background:#13212b;border:1px solid #2d414b;border-radius:15px;overflow:hidden}.sectionhead{padding:20px;display:flex;align-items:center;justify-content:space-between;gap:12px}.hint{font-size:12px;color:#9bb0b9}table{border-collapse:collapse;width:100%}thead{background:#192c36}th{text-align:left;font-size:12px;font-weight:600;letter-spacing:.04em;color:#9fbac4;padding:13px 16px}td{border-top:1px solid #293e46;padding:15px 16px;font-size:13px}td .muted{color:#a1b7c0}.tag{padding:5px 8px;border-radius:6px;font-size:11px;font-weight:750;letter-spacing:.04em}.tag.sos{background:#4e2a2e;color:#ffaaa4}.tag.env{background:#59432a;color:#ffd28a}.tablewrap{overflow-x:auto}#empty{text-align:center;padding:36px;color:#a7bcc6}footer{font-size:12px;color:#90a8b2;line-height:1.6;margin-top:20px}button{padding:8px 12px;border-radius:8px;color:#eaf2f4;background:#274453;border:1px solid #476373;cursor:pointer}button:hover{background:#376071}@media(max-width:720px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}td,th{padding:11px 9px}header{padding:24px 20px}}@media(max-width:420px){.cards{grid-template-columns:1fr 1fr}.value{font-size:27px}}
+  
+.grid2{display:grid;grid-template-columns:minmax(0,620px) minmax(0,1fr);gap:16px;padding:0 20px 20px}@media(max-width:900px){.grid2{grid-template-columns:1fr}}
+canvas{max-width:100%;background:#0d1a22;border:1px solid #2d414b;border-radius:10px;display:block}
+.controls{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:0 20px 14px}input[type=range]{flex:1;min-width:180px}select{background:#192c36;color:#eaf2f4;border:1px solid #476373;border-radius:8px;padding:7px}
+.legend{display:flex;gap:12px;font-size:12px;color:#a1b7c0;flex-wrap:wrap}.sw{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-2px}
+.lab{padding:3px 7px;border-radius:6px;font-size:11px;font-weight:700}.lab.c{background:#4e2a2e;color:#ffaaa4}.lab.i{background:#24473a;color:#8ee0bd}.lab.n{background:#2a3b44;color:#a1b7c0}
+.act{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.act select{padding:4px}.act button{padding:4px 8px;font-size:12px}
+.msg{padding:0 20px 14px;font-size:12px;color:#ffd28a;min-height:18px}
+.sel{background:#1c3340}
+</style>
+</head>
+<body>
+<header>
+ <div class="brand"><div class="mark" aria-hidden="true">🌲</div><div><div class="eyebrow">WildfireSense / IoT + Edge</div><h1>Centro de control</h1></div></div>
+ <p>Alarmas oficiales recibidas desde el Edge mediante MQTT. Persistencia local en SQLite y actualización automática del panel.</p>
+ <div class="status"><div class="pill"><span class="dot" id="mqtt-dot"></span><span id="broker">Conectando al broker...</span></div><div class="pill" id="sync">Sincronizando datos...</div><div class="pill" id="edge">Esperando estado del gateway…</div></div>
+</header>
+<main class="page">
+ <div class="cards"><div class="card"><span>Total de alarmas</span><strong class="value" id="total">—</strong></div><div class="card"><span>Incidentes agrupados</span><strong class="value high" id="incidents-count">—</strong></div><div class="card"><span>SOS críticos</span><strong class="value critical" id="sos">—</strong></div><div class="card"><span>Lecturas en ventana</span><strong class="value" id="readings-count">—</strong></div><div class="card"><span>Modelo activo</span><strong class="value" id="model-active" style="font-size:18px">—</strong></div><div class="card"><span>Última recepción</span><strong class="value" id="last" style="font-size:19px">—</strong></div></div>
+ <p id="analysis" aria-live="polite"></p>
+
+ <section class="section" style="margin-bottom:22px"><div class="sectionhead"><div><h2>Propagación del incendio</h2><div class="hint">Cada celda es un nodo de la rejilla 32×32. El color indica el orden en que alarmó; el fondo, el PM2,5 máximo de su zona.</div></div></div>
+  <div class="controls"><label for="inc-select">Incidente</label><select id="inc-select"></select><button id="play" type="button">▶ Reproducir</button><input id="slider" type="range" min="0" max="0" value="0" step="1" aria-label="Tiempo desde el primer nodo"><span id="tlabel" class="hint">—</span></div>
+  <div class="grid2"><div><canvas id="map" width="576" height="576" role="img" aria-label="Mapa de propagación por nodo"></canvas><div class="legend" style="margin-top:8px"><span><i class="sw" style="background:#ffe08a"></i>primeros</span><span><i class="sw" style="background:#ff7a3d"></i>intermedios</span><span><i class="sw" style="background:#c0152b"></i>últimos</span><span><i class="sw" style="background:#fff;outline:2px solid #4fd4a6"></i>origen</span><span id="hover" class="hint"></span></div></div>
+  <div><h2 style="font-size:15px;margin-bottom:8px">PM2,5 de los primeros nodos</h2><canvas id="chart" width="460" height="260" role="img" aria-label="PM2,5 de los primeros nodos del incidente"></canvas><div id="chart-note" class="hint" style="margin-top:6px"></div></div></div>
+ </section>
+
+ <section class="section" style="margin-bottom:22px"><div class="sectionhead"><div><h2>Incidentes y etiquetas</h2><div class="hint">Marca una alarma como correcta o falsa. Esa etiqueta verificada alimenta el reentrenamiento. Una etiqueta manual prevalece sobre la del escenario.</div></div></div><div class="msg" id="label-msg"></div><div class="tablewrap"><table><thead><tr><th>Primera señal</th><th>Duración</th><th>Nodos</th><th>Origen</th><th>Pico PM2,5</th><th>Etiqueta</th><th>Marcar</th></tr></thead><tbody id="incident-rows"></tbody></table><div id="incidents-empty" style="padding:16px;color:#9bb0b9">Sin sospechas corroboradas agrupables.</div></div></section>
+
+ <section class="section" style="margin-bottom:22px"><div class="sectionhead"><div><h2>Modelo y reentrenamiento</h2><div class="hint" id="retrain-hint">—</div></div><div class="act"><button id="retrain" type="button">Reentrenar ahora</button><button id="rollback" type="button">Volver al modelo anterior</button></div></div><div class="msg" id="model-msg"></div><div class="tablewrap"><table><thead><tr><th>Versión</th><th>Estado</th><th>Puerta sintética</th><th>Creado</th><th></th></tr></thead><tbody id="model-rows"></tbody></table></div></section>
+
+ <section class="section"><div class="sectionhead"><div><h2>Historial de avisos</h2><div class="hint">Las más recientes primero · actualización cada 2 segundos</div></div><button id="refresh" type="button">Actualizar</button></div><div class="tablewrap"><table><thead><tr><th>Recibida</th><th>Tipo</th><th>Decisión</th><th>Sensor</th><th>Prioridad</th><th>Proceso Edge</th></tr></thead><tbody id="rows"></tbody></table><div id="empty">Todavía no se han recibido alarmas oficiales.</div></div></section>
+ <footer>Receptor central local dentro de Docker, no un servicio Cloud desplegado en Internet. Datos sintéticos; las pruebas pueden contener <code>test_only: true</code>. No valida incendios reales.</footer>
+</main>
+<script>
+const byId=id=>document.getElementById(id);
+const GRID=32,CELL=18;
+let incidents=[],nodes={},zones={},current=null,timer=null,sliderBusy=false;
+function dateText(s){if(!s)return '—';const d=new Date(s);return isNaN(d.getTime())?s:d.toLocaleString('es-ES',{hour12:false});}
+function field(parent,name,text){const td=document.createElement('td');td.className=name||'';td.textContent=text;parent.appendChild(td);return td;}
+function el(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
+async function api(path,body){const r=await fetch(path,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{cache:'no-store'});const j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||('HTTP '+r.status));return j;}
+function nodeXY(id){const n=nodes[id];if(n)return[n.x,n.y];const m=/^node_(\d+)$/.exec(id);if(!m)return null;const i=+m[1]-1;return[i%GRID,Math.floor(i/GRID)];}
+function ramp(f){const c=f<.5?[[255,224,138],[255,122,61],f*2]:[[255,122,61],[192,21,43],(f-.5)*2];const a=c[0],b=c[1],t=c[2];return 'rgb('+a.map((v,k)=>Math.round(v+(b[k]-v)*t)).join(',')+')';}
+function heat(pm){if(pm==null)return '#0d1a22';const f=Math.max(0,Math.min(1,pm/150));return 'rgba(79,212,166,'+(0.05+0.35*f).toFixed(2)+')';}
+function drawMap(){const c=byId('map'),g=c.getContext('2d');g.clearRect(0,0,c.width,c.height);
+ for(let y=0;y<GRID;y++)for(let x=0;x<GRID;x++){const id='node_'+String(y*GRID+x+1).padStart(4,'0');const z=nodes[id]&&nodes[id].zone;g.fillStyle='#0d1a22';g.fillRect(x*CELL,y*CELL,CELL,CELL);g.fillStyle=heat(z&&zones[z]?zones[z].max_pm25:null);g.fillRect(x*CELL,y*CELL,CELL,CELL);g.strokeStyle='#14232d';g.strokeRect(x*CELL+.5,y*CELL+.5,CELL-1,CELL-1);}
+ if(!current)return;const t=+byId('slider').value,tl=current.timeline,n=tl.length;let on=0;
+ tl.forEach((s,i)=>{if(s.offset_s>t)return;on++;const p=nodeXY(s.node);if(!p)return;g.fillStyle=ramp(n>1?i/(n-1):0);g.fillRect(p[0]*CELL+1,p[1]*CELL+1,CELL-2,CELL-2);if(i===0){g.strokeStyle='#4fd4a6';g.lineWidth=3;g.strokeRect(p[0]*CELL+2,p[1]*CELL+2,CELL-4,CELL-4);g.lineWidth=1;}});
+ byId('tlabel').textContent='t = +'+Math.round(t/60*10)/10+' min · '+on+' de '+n+' nodos en alarma';}
+async function drawChart(){const c=byId('chart'),g=c.getContext('2d');g.clearRect(0,0,c.width,c.height);const note=byId('chart-note');
+ if(!current){note.textContent='';return;}
+ const first=Date.parse(current.first_seen),last=Date.parse(current.last_seen),pad=600000;
+ const picks=current.timeline.slice(0,4);let series=[];
+ try{for(const s of picks){const d=await api('/api/readings?run_id='+encodeURIComponent(current.run_id)+'&node_id='+s.node+'&since='+(first-pad)+'&until='+(last+pad)+'&limit=1000');series.push({node:s.node,pts:d.readings.filter(r=>r.pm25!=null).reverse()});}}catch(e){series=[];}
+ const all=series.flatMap(s=>s.pts);if(!all.length){g.fillStyle='#9bb0b9';g.font='13px system-ui';g.fillText('Sin lecturas guardadas para este incidente',20,130);note.textContent='La evidencia llega solo en incidentes (topic edge/evidence).';return;}
+ const t0=Math.min(...all.map(r=>r.ts_ms)),t1=Math.max(...all.map(r=>r.ts_ms)),ymax=Math.max(40,...all.map(r=>r.pm25))*1.1,L=44,B=24,W=c.width-L-10,H=c.height-B-10;
+ g.strokeStyle='#2d414b';g.fillStyle='#9bb0b9';g.font='11px system-ui';for(let k=0;k<=4;k++){const y=10+H-H*k/4;g.beginPath();g.moveTo(L,y);g.lineTo(L+W,y);g.stroke();g.fillText(Math.round(ymax*k/4),6,y+4);}
+ const y35=10+H-H*35.5/ymax;if(y35>10){g.strokeStyle='#d9aa5e';g.setLineDash([4,4]);g.beginPath();g.moveTo(L,y35);g.lineTo(L+W,y35);g.stroke();g.setLineDash([]);g.fillStyle='#d9aa5e';g.fillText('35,5',L+W-30,y35-3);}
+ const colors=['#ffe08a','#ff7a3d','#c0152b','#8cb7ac'];series.forEach((s,i)=>{g.strokeStyle=colors[i];g.lineWidth=2;g.beginPath();s.pts.forEach((r,k)=>{const x=L+W*(r.ts_ms-t0)/Math.max(1,t1-t0),y=10+H-H*r.pm25/ymax;k?g.lineTo(x,y):g.moveTo(x,y);});g.stroke();g.fillStyle=colors[i];g.fillText(s.node.slice(5),L+8+i*50,c.height-8);});g.lineWidth=1;
+ note.textContent='PM2,5 (µg/m³) de los '+series.length+' primeros nodos; línea discontinua = 35,5 µg/m³ (referencia experimental).';}
+function select(inc){current=inc;const s=byId('slider');const max=inc?Math.ceil(inc.timeline[inc.timeline.length-1].offset_s):0;s.max=max;s.step=Math.max(1,Math.round(max/200));s.value=max;drawMap();drawChart();}
+function renderSelect(){const sel=byId('inc-select');const prev=current&&current.incident_id;sel.replaceChildren();incidents.forEach(i=>{const o=el('option',i.first_node+' · '+dateText(i.first_seen)+' · '+i.node_count+' nodos');o.value=i.incident_id;sel.appendChild(o);});
+ const keep=incidents.find(i=>i.incident_id===prev)||incidents[0]||null;if(keep){sel.value=keep.incident_id;if(!current||current.incident_id!==keep.incident_id)select(keep);else{current=keep;drawMap();}}else select(null);}
+function labelCell(tr,l){const td=el('td');if(!l){td.appendChild(el('span','sin etiqueta','lab n'));}else{td.appendChild(el('span',(l.label==='correct'?'CORRECTA · ':'FALSA · ')+l.true_class+' ('+(l.source==='manual'?'manual':'escenario')+')','lab '+(l.label==='correct'?'c':'i')));}tr.appendChild(td);}
+function actCell(tr,inc){const td=el('td'),box=el('div',undefined,'act');const sel=el('select');['normal','dust','fog','direct_sun','slow_fire','fast_fire'].forEach(v=>{const o=el('option',({normal:'ruido/otro',dust:'polvo',fog:'niebla',direct_sun:'sol directo',slow_fire:'fuego lento',fast_fire:'fuego rápido'})[v]);o.value=v;sel.appendChild(o);});
+ const b=el('button','Guardar');b.type='button';b.addEventListener('click',async()=>{const cls=sel.value,fire=cls.endsWith('_fire');try{await api('/api/labels',{incident_id:inc.incident_id,label:fire?'correct':'incorrect',true_class:cls});byId('label-msg').textContent='';await refresh();}catch(e){byId('label-msg').textContent='No se pudo guardar: '+e.message;}});box.append(sel,b);td.appendChild(box);tr.appendChild(td);}
+function renderIncidents(){const ir=byId('incident-rows');ir.replaceChildren();byId('incidents-empty').hidden=incidents.length>0;
+ for(const inc of incidents){const tr=document.createElement('tr');if(current&&inc.incident_id===current.incident_id)tr.className='sel';tr.style.cursor='pointer';tr.addEventListener('click',e=>{if(e.target.closest('.act'))return;byId('inc-select').value=inc.incident_id;select(inc);renderIncidents();});
+  field(tr,'muted',dateText(inc.first_seen));field(tr,'',Math.round(inc.duration_s/60*10)/10+' min');field(tr,'',inc.node_count);field(tr,'',inc.first_node);field(tr,'',inc.peak_pm25==null?'—':Math.round(inc.peak_pm25*10)/10);labelCell(tr,inc.label);actCell(tr,inc);ir.appendChild(tr);}}
+function renderModels(m){const rows=byId('model-rows');rows.replaceChildren();const act=m.models.find(x=>x.status==='active');byId('model-active').textContent=act?act.version:'—';
+ byId('retrain-hint').textContent='Etiquetas nuevas: '+m.pending_labels+' de '+m.trigger_labels+' para el reentrenamiento automático'+(m.running?' · entrenando…':'');byId('retrain').disabled=m.running;
+ for(const x of m.models){const tr=document.createElement('tr');field(tr,'',x.version);field(tr,'',({active:'ACTIVO',candidate:'candidato aprobado',previous:'anterior',rejected:'rechazado'})[x.status]||x.status);
+  const met=x.metrics;field(tr,'muted',met?((met.approved?'aprobado':'rechazado')+(met.reasons&&met.reasons.length?' · '+met.reasons.join(', '):'')):'—');field(tr,'muted',dateText(x.created_at));
+  const td=el('td');if(x.status==='candidate'){const b=el('button','Promover');b.type='button';b.addEventListener('click',async()=>{try{await api('/api/models/promote',{version:x.version});byId('model-msg').textContent='';await refresh();}catch(e){byId('model-msg').textContent='No se pudo promover: '+e.message;}});td.appendChild(b);}tr.appendChild(td);rows.appendChild(tr);}}
+async function refresh(){try{const [stats,data,inc]=await Promise.all([api('/api/stats'),api('/api/alerts?limit=100'),api('/api/incidents?limit=40')]);const e=stats.edge;
+ if(e){const age=Date.now()-Date.parse(e.generated_at);byId('edge').textContent=(age>8000?'Último estado · ':'')+e.nodes+' sensores · '+e.readings+' lecturas · p95 Edge '+(e.processing_p95_ms??'—')+' ms';}
+ incidents=inc.incidents.filter(i=>i.timeline&&i.timeline.length);byId('incidents-count').textContent=inc.total_incidents;renderSelect();renderIncidents();
+ const w=stats.last_summary;byId('analysis').textContent=w?'Último resumen · '+(w.zone?'zona '+w.zone+' · ':'')+'calculado en '+w.computed_by+' · PM2,5 media '+w.mean_pm25+' µg/m³ · '+w.n+' muestras':'';
+ byId('total').textContent=stats.total_alerts;byId('sos').textContent=stats.sos_alerts;byId('readings-count').textContent=stats.stored_readings??0;byId('last').textContent=dateText(stats.last_received_at);byId('mqtt-dot').classList.toggle('ok',!!stats.mqtt_connected);byId('broker').textContent=stats.mqtt_connected?'MQTT conectado':'MQTT desconectado · reintentando';byId('sync').textContent='Datos actualizados: '+new Date().toLocaleTimeString('es-ES');
+ const tbody=byId('rows');tbody.replaceChildren();byId('empty').hidden=data.alerts.length>0;for(const item of data.alerts){const tr=document.createElement('tr');field(tr,'muted',dateText(item.received_at));const t=field(tr,'',(item.alert_type==='sos_alert'?'SOS CRÍTICO':'AMBIENTAL')+(item.payload&&item.payload.test_only?' · TEST':''));t.className=item.alert_type==='sos_alert'?'tag sos':'tag env';field(tr,'',({environmental_risk:'Preaviso local',suspected_fire:'Sospecha con vecino',sos_alert:'Botón SOS'})[item.payload.decision]||'—');field(tr,'',item.node_id);field(tr,'',item.priority);field(tr,'muted',item.edge_processing_ms===null?'—':item.edge_processing_ms+' ms');tbody.appendChild(tr);}
+ try{renderModels(await api('/api/models'));}catch(e){byId('retrain-hint').textContent='Reentrenamiento no activo en este despliegue';}
+ try{const z=await api('/api/zones');zones={};(z.zones||z).forEach(x=>zones[x.zone]=x);}catch(e){}
+ }catch(e){byId('sync').textContent='Error al actualizar · reintentando';}}
+async function init(){try{const n=await api('/api/nodes');(n.nodes||n).forEach(x=>nodes[x.node_id]=x);}catch(e){}drawMap();refresh();setInterval(refresh,2000);}
+byId('refresh').addEventListener('click',refresh);
+byId('inc-select').addEventListener('change',e=>{select(incidents.find(i=>i.incident_id===e.target.value)||null);renderIncidents();});
+byId('slider').addEventListener('input',drawMap);
+byId('play').addEventListener('click',()=>{const s=byId('slider'),b=byId('play');if(timer){clearInterval(timer);timer=null;b.textContent='▶ Reproducir';return;}if(+s.value>=+s.max)s.value=0;b.textContent='⏸ Pausa';timer=setInterval(()=>{const next=+s.value+Math.max(1,+s.step)*2;if(next>=+s.max){s.value=s.max;clearInterval(timer);timer=null;b.textContent='▶ Reproducir';}else s.value=next;drawMap();},60);});
+byId('retrain').addEventListener('click',async()=>{try{await api('/api/retrain',{});byId('model-msg').textContent='Reentrenando…';refresh();}catch(e){byId('model-msg').textContent=e.message;}});
+byId('rollback').addEventListener('click',async()=>{try{await api('/api/models/rollback',{});byId('model-msg').textContent='';refresh();}catch(e){byId('model-msg').textContent='No se pudo volver atrás: '+e.message;}});
+init();
+</script>
+</body>
+</html>
